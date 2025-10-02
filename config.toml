@@ -1,0 +1,20 @@
+# Configuration file for shipsound_byAIS parameters
+
+[visualization]
+# Parameters for plot_mother_source_spectrogram (time-averaged version)
+chunk_duration_seconds = 300 # Duration of chunks for processing in seconds (e.g., 10 * 60 = 10 minutes)
+spectrogram_nperseg = 1024   # Segment length for STFT
+# noverlap is calculated as nperseg // 2 in the code
+
+# Plotting appearance
+plot_max_freq_bins = 200     # Maximum frequency bins to display (reduces resolution if exceeded)
+plot_db_min = -80            # Minimum dB level for colormap normalization
+plot_db_max = -10            # Maximum dB level for colormap normalization
+plot_max_cuts = 15           # Maximum number of cut annotations to display on spectrogram
+plot_dpi = 150               # DPI for saving spectrogram images
+
+[audio_processing]
+# Parameters for cut_wav_and_make_metadata
+cut_margin_minutes = 5       # Margin in minutes before and after min_distance_time to define cut range 
+max_cut_distance = 10000.0    # 最大カット距離（メートル）- この距離以内の船舶だけがカット対象
+check_other_vessels = true   # 対象船舶が最も接近した時刻で他の船舶すべてが対象船舶よりも録音位置から離れているかチェックする 
