@@ -46,8 +46,8 @@ test_df1 = pd.DataFrame(
     }
 )
 
-# 録音位置設定
-record_pos = [129.77558, 32.71161]
+# 録音位置設定 (latitude, longitude)
+record_pos = [32.71161, 129.77558]
 
 # 時間順ソートの検証
 print("\nVessel A (123456789)のデータ:")
@@ -70,8 +70,8 @@ fig, ax = plt.subplots(figsize=(10, 8))
 ax.set_xlabel("Longitude")
 ax.set_ylabel("Latitude")
 
-# 録音位置プロット
-ax.scatter(record_pos[0], record_pos[1], c="blue", marker="*", s=100, label="rec_pos")
+# 録音位置プロット (X=longitude, Y=latitude)
+ax.scatter(record_pos[1], record_pos[0], c="blue", marker="*", s=100, label="rec_pos")
 
 # 各船舶の軌跡を明示的にプロット
 colors = ["red", "green"]

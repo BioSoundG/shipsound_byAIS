@@ -111,7 +111,7 @@ class TestVisualization(unittest.TestCase):
                 "width": [20, 20, 25, 25],  # Added for distance calc if needed
             }
         )
-        self.record_pos = (129.77558, 32.71161)  # Lon, Lat order for scatter
+        self.record_pos = (32.71161, 129.77558)  # Lat, Lon order (consistent with metadata.toml)
         self.original_style = plt.rcParams.copy()
         self.images = []
         # Use the class-level config by default
@@ -227,7 +227,7 @@ class TestVisualization(unittest.TestCase):
         max_lon = self.test_df["longitude"].max()
         min_lat = self.test_df["latitude"].min()
         max_lat = self.test_df["latitude"].max()
-        rec_lon, rec_lat = self.record_pos
+        rec_lat, rec_lon = self.record_pos  # record_pos = (latitude, longitude)
         exp_min_lon = min(min_lon, rec_lon)
         exp_max_lon = max(max_lon, rec_lon)
         exp_min_lat = min(min_lat, rec_lat)
@@ -471,10 +471,11 @@ class TestVisualization(unittest.TestCase):
         ):
 
             mock_sf_instance = MagicMock()
-            mock_sf_instance.__enter__.return_value.samplerate = sample_rate
-            mock_sf_instance.__enter__.return_value.__len__.return_value = int(
-                duration * sample_rate
-            )
+            mock_sf_context = mock_sf_instance.__enter__.return_value
+            mock_sf_context.samplerate = sample_rate
+            mock_sf_context.__len__.return_value = int(duration * sample_rate)
+            mock_sf_context.seek = MagicMock()
+            mock_sf_context.read = MagicMock(return_value=tone)
             mock_soundfile.return_value = mock_sf_instance
 
             plot_mother_source_spectrogram(

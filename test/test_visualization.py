@@ -695,8 +695,8 @@ class TestVisualization(unittest.TestCase):
         min_lat = self.test_df["latitude"].dropna().min()
         max_lat = self.test_df["latitude"].dropna().max()
 
-        # 録音位置も考慮
-        record_lon, record_lat = self.record_pos
+        # 録音位置も考慮 (record_pos = [latitude, longitude])
+        record_lat, record_lon = self.record_pos
         expected_min_lon = min(min_lon, record_lon)
         expected_max_lon = max(max_lon, record_lon)
         expected_min_lat = min(min_lat, record_lat)

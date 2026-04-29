@@ -15,17 +15,19 @@ class TestDistanceCalculation(unittest.TestCase):
         # テスト用のデータフレームを作成
         self.test_df = pd.DataFrame(
             {
-                "mmsi": [123456789, 123456789, 987654321, 987654321],
-                "vessel_name": ["Vessel A", "Vessel A", "Vessel B", "Vessel B"],
-                "vessel_type": ["Cargo", "Cargo", "Passenger", "Passenger"],
-                "length": [100, 100, 150, 150],
-                "width": [20, 20, 30, 30],
-                "latitude": [32.7, 32.71, 32.72, 32.73],
-                "longitude": [129.7, 129.71, 129.72, 129.73],
+                "mmsi": [123456789, 123456789, 123456789, 987654321, 987654321, 987654321],
+                "vessel_name": ["Vessel A", "Vessel A", "Vessel A", "Vessel B", "Vessel B", "Vessel B"],
+                "vessel_type": ["Cargo", "Cargo", "Cargo", "Passenger", "Passenger", "Passenger"],
+                "length": [100, 100, 100, 150, 150, 150],
+                "width": [20, 20, 20, 30, 30, 30],
+                "latitude": [32.7, 32.705, 32.71, 32.72, 32.725, 32.73],
+                "longitude": [129.7, 129.705, 129.71, 129.72, 129.725, 129.73],
                 "dt_pos_utc": [
                     pd.Timestamp("2024-03-19 07:00:00"),
+                    pd.Timestamp("2024-03-19 07:00:30"),
                     pd.Timestamp("2024-03-19 07:01:00"),
                     pd.Timestamp("2024-03-19 07:02:00"),
+                    pd.Timestamp("2024-03-19 07:02:30"),
                     pd.Timestamp("2024-03-19 07:03:00"),
                 ],
             }
@@ -127,6 +129,38 @@ class TestDistanceCalculation(unittest.TestCase):
 
         # エラーメッセージに欠けているカラム名が含まれていることを確認
         self.assertIn("length", str(context.exception))
+
+    def test_min_distance_time_and_value_with_depth(self):
+        """記録点と同一座標を通過するケースで、最小距離時刻と値（=depth）が一致することを検証"""
+        record_pos = [35.0000, 139.0000]
+        record_depth = 123.0
+
+        times = [
+            pd.Timestamp("2024-01-01 00:00:00"),
+            pd.Timestamp("2024-01-01 00:00:10"),
+            pd.Timestamp("2024-01-01 00:00:20"),
+        ]
+        df = pd.DataFrame(
+            {
+                "mmsi": [111111111, 111111111, 111111111],
+                "vessel_name": ["TestVessel"] * 3,
+                "vessel_type": ["Cargo"] * 3,
+                "length": [100, 100, 100],
+                "width": [20, 20, 20],
+                # 真ん中の点が記録点と完全一致
+                "latitude": [34.9990, 35.0000, 35.0010],
+                "longitude": [139.0000, 139.0000, 139.0000],
+                "dt_pos_utc": times,
+            }
+        )
+
+        distances = calculate_shortest_distance(df, record_pos, record_depth)
+        self.assertEqual(len(distances), 1)
+        d = distances[0]
+        # 中央の時刻が最短になるはず
+        self.assertEqual(d["min_distance_time"], times[1])
+        # 水平距離0 -> 3D距離はdepthと一致
+        self.assertAlmostEqual(d["min_distance [m]"], record_depth, places=6)
 
 
 if __name__ == "__main__":

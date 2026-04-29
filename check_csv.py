@@ -2,9 +2,11 @@ import pandas as pd
 import os
 import sys
 
-# CSVファイルを読み込み
+# CSVファイルを読み込み（AISは共通関数を使用）
 csv_path = "g:/20240319_nagasaki/IHI_JAMSTEC_032024/IHI_JAMSTEC_032024/Spire_20240319090000_20240319210000.csv"
-df = pd.read_csv(csv_path)
+sys.path.append(os.getcwd())
+from data_processing import read_ais
+df = read_ais(csv_path)
 
 # 列名の一覧を表示
 print("CSV Columns:")
@@ -23,8 +25,7 @@ else:
         missing.append("width")
     print(f"\nMissing columns: {missing}")
 
-# 現在のディレクトリに移動
-sys.path.append(os.getcwd())
+# 現在のディレクトリに移動（上で追加済み）
 
 # distance_calculationモジュールをインポート
 try:

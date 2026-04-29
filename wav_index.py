@@ -72,6 +72,13 @@ class WavFileIndex:
                 <= target_time
                 <= self.time_ranges[current_index]["end"]
             ):
+                # ちょうどファイル開始時刻に一致した場合は、直前のファイルを優先
+                # （切り出しで前後2ファイルを連結して処理するため、境界=開始は前ファイル側で扱う）
+                if (
+                    target_time == self.time_ranges[current_index]["start"]
+                    and current_index > 0
+                ):
+                    return current_index - 1
                 return current_index
             elif self.time_ranges[current_index]["start"] > target_time:
                 right = mid - 1
@@ -134,3 +141,17 @@ class WavFileIndex:
         if not self.time_ranges:
             return datetime.timedelta(0)
         return self.time_ranges[-1]["end"] - self.time_ranges[0]["start"]
+
+    def get_start_time(self, wav_index: int) -> pd.Timestamp:
+        """
+        指定WAVファイルの開始時刻を取得
+
+        Args:
+            wav_index (int): WAVファイルのインデックス
+
+        Returns:
+            pd.Timestamp: 開始時刻
+        """
+        if 0 <= wav_index < len(self.time_ranges):
+            return self.time_ranges[wav_index]["start"]
+        return None

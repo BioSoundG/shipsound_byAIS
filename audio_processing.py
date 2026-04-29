@@ -210,6 +210,9 @@ def cut_wav_and_make_metadata(
         output_dir (str): Path to the output directory where the files will be saved.
         record_pos (tuple): The recording position (latitude, longitude).
         audio_config (dict): Dictionary containing audio processing parameters from config.toml.
+    
+    Returns:
+        int: Number of WAV files actually cut and saved.
     """
     # 出力ディレクトリを作成
     wav_output_dir = os.path.join(output_dir, "wav")
@@ -226,29 +229,57 @@ def cut_wav_and_make_metadata(
 
     # WAVファイルのインデックスを構築
     wav_index = WavFileIndex(wav_list, pd.to_datetime(start_tim))
+    
+    # WAV時刻範囲をデバッグ出力
+    wav_start_time = wav_index.record_start_time
+    wav_durations = wav_index.get_wav_durations()
+    total_duration = sum(wav_durations)
+    wav_end_time = wav_start_time + datetime.timedelta(seconds=total_duration)
+    print(f"\n[DEBUG] WAVファイル情報:")
+    print(f"  ファイル数: {len(wav_list)}")
+    print(f"  録音開始時刻: {wav_start_time}")
+    print(f"  録音終了時刻: {wav_end_time}")
+    print(f"  総録音時間: {total_duration/3600:.2f} 時間")
 
     # 最接近時刻でソート
     sorted_distances = distances.sort_values("min_distance_time")
 
     # 前回の探索位置を記録
     last_processed_wav_index = 0
+    
+    # 実際に切り出されたWAVファイル数をカウント
+    cut_count = 0
+    
+    # デバッグ用：スキップ理由のカウント
+    skip_reasons = {
+        "distance_exceeded": 0,
+        "not_closest_vessel": 0,
+        "wav_not_found": 0,
+        "wav_index_out_of_range": 0,
+        "cut_failed": 0,
+    }
 
-    # 処理済みのWAVファイルを記録
-    processed_wav_files = set()
+    print(f"\n[DEBUG] 切り出し処理開始: 対象船舶数 = {len(sorted_distances)}")
 
-    for _, distance in sorted_distances.iterrows():
+    for vessel_idx, distance in sorted_distances.iterrows():
+        mmsi = distance['mmsi']
+        vessel_name = distance.get('vessel_name', 'Unknown')
+        min_dist = distance["min_distance [m]"]
+        min_dist_time = distance["min_distance_time"]
+        
+        print(f"\n[DEBUG] 船舶 {vessel_idx+1}/{len(sorted_distances)}: {vessel_name} (MMSI: {mmsi})")
+        print(f"        最短距離: {min_dist:.2f}m, 時刻: {min_dist_time}")
+        
         # 条件1: 最短距離が設定した距離以下かチェック
-        if distance["min_distance [m]"] > max_cut_distance:
-            print(
-                f"船舶 {distance.get('vessel_name', 'Unknown')} (MMSI: {distance['mmsi']})の最短距離が設定上限を超えています: "
-                f"{distance['min_distance [m]']:.2f}m > {max_cut_distance:.2f}m"
-            )
+        if min_dist > max_cut_distance:
+            print(f"        → スキップ: 距離超過 ({min_dist:.2f}m > {max_cut_distance:.2f}m)")
+            skip_reasons["distance_exceeded"] += 1
             continue
 
         # 条件2: 他の船舶との距離比較をチェック（必要な場合）
         if check_other_vessels and not distance_list.empty:
-            min_distance_time = distance["min_distance_time"]
-            target_mmsi = distance["mmsi"]
+            print(f"        他船比較チェック実施中...")
+            target_mmsi = mmsi
             is_closest_vessel = True
 
             for other_mmsi in distances["mmsi"].unique():
@@ -261,45 +292,45 @@ def cut_wav_and_make_metadata(
 
                 other_vessel_data = other_vessel_data.copy()
                 other_vessel_data["time_diff"] = abs(
-                    other_vessel_data["dt_pos_utc"] - min_distance_time
+                    other_vessel_data["dt_pos_utc"] - min_dist_time
                 )
                 closest_record = other_vessel_data.loc[
                     other_vessel_data["time_diff"].idxmin()
                 ]
 
-                if closest_record["distance [m]"] < distance["min_distance [m]"]:
+                if closest_record["distance [m]"] < min_dist:
                     print(
-                        f"船舶 {distance.get('vessel_name', 'Unknown')} (MMSI: {target_mmsi})の最短距離時刻に、"
-                        f"他の船舶 (MMSI: {other_mmsi})が対象船舶より録音位置に近い: "
-                        f"{closest_record['distance [m]']:.2f}m < {distance['min_distance [m]']:.2f}m"
+                        f"        → スキップ: 他船がより近い (他船MMSI: {other_mmsi}, "
+                        f"{closest_record['distance [m]']:.2f}m < {min_dist:.2f}m)"
                     )
                     is_closest_vessel = False
                     break
 
             if not is_closest_vessel:
+                skip_reasons["not_closest_vessel"] += 1
                 continue
+            else:
+                print(f"        他船比較: OK (最も近い船舶)")
 
         # 切り出し時刻の計算
-        min_distance_time = distance["min_distance_time"]
         margin_delta = datetime.timedelta(minutes=cut_margin_minutes)
-        start_time = min_distance_time - margin_delta
-        end_time = min_distance_time + margin_delta
+        start_time = min_dist_time - margin_delta
+        end_time = min_dist_time + margin_delta
+        
+        print(f"        切り出し時刻: {start_time} ~ {end_time} (マージン: {cut_margin_minutes}分)")
 
         # 前回の探索位置から開始
         wav_idx = wav_index.find_wav_index(start_time, last_processed_wav_index)
-        with open("debug_log.txt", "a") as dbg:
-            dbg.write(
-                f"[DEBUG] wav_idx={wav_idx}, len(wav_list)={len(wav_list)}, start_time={start_time}, last_processed_wav_index={last_processed_wav_index}\n"
-            )
+        print(f"        WAVファイル検索: wav_idx={wav_idx}, last_processed={last_processed_wav_index}")
+        
         if wav_idx is None:
-            continue
-
-        # 既に処理済みのWAVファイルはスキップ
-        if wav_idx in processed_wav_files:
+            print(f"        → スキップ: WAVファイルが見つからない (時刻範囲外)")
+            skip_reasons["wav_not_found"] += 1
             continue
 
         # 切り出し処理
         if wav_idx < len(wav_list) - 1:
+            print(f"        切り出し実行中: {os.path.basename(wav_list[wav_idx])} & {os.path.basename(wav_list[wav_idx + 1])}")
             # サンプルオフセットを取得
             data_sample_num = wav_index.get_sample_offset(wav_idx)
 
@@ -331,4 +362,29 @@ def cut_wav_and_make_metadata(
                 # メタデータの更新とTOMLファイルの生成
                 update_metadata_and_save_toml(meta_d, distance, wav_name, output_dir)
                 last_processed_wav_index = wav_idx
-                processed_wav_files.add(wav_idx)
+                cut_count += 1
+                print(f"        ✓ 切り出し成功: {wav_name}.wav")
+            else:
+                print(f"        → スキップ: 切り出し失敗 (flag=False)")
+                skip_reasons["cut_failed"] += 1
+        else:
+            print(f"        → スキップ: WAVインデックス範囲外 (wav_idx={wav_idx} >= {len(wav_list)-1})")
+            skip_reasons["wav_index_out_of_range"] += 1
+    
+    # デバッグサマリーを出力
+    print("\n" + "="*60)
+    print("[DEBUG] 切り出し処理完了サマリー:")
+    print("="*60)
+    print(f"対象船舶数:             {len(sorted_distances):>6} 隻")
+    print(f"切り出し成功:           {cut_count:>6} 個")
+    print(f"スキップ合計:           {sum(skip_reasons.values()):>6} 隻")
+    print("-"*60)
+    print("スキップ内訳:")
+    print(f"  - 距離超過:           {skip_reasons['distance_exceeded']:>6} 隻")
+    print(f"  - 他船がより近い:     {skip_reasons['not_closest_vessel']:>6} 隻")
+    print(f"  - WAV見つからず:      {skip_reasons['wav_not_found']:>6} 隻")
+    print(f"  - WAVインデックス範囲外: {skip_reasons['wav_index_out_of_range']:>6} 隻")
+    print(f"  - 切り出し失敗:       {skip_reasons['cut_failed']:>6} 隻")
+    print("="*60)
+    
+    return cut_count

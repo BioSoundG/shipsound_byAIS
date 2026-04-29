@@ -2,19 +2,34 @@
 
 [visualization]
 # Parameters for plot_mother_source_spectrogram (time-averaged version)
+enable_spectrogram = true    # スペクトログラムを生成・保存するかどうか
 chunk_duration_seconds = 300 # Duration of chunks for processing in seconds (e.g., 10 * 60 = 10 minutes)
-spectrogram_nperseg = 1024   # Segment length for STFT
+spectrogram_nperseg = 8192   # Segment length for STFT (96kHz対応: 8192=約85ms窓)
 # noverlap is calculated as nperseg // 2 in the code
+
+# Frequency range for spectrogram display
+freq_min = 0                 # 表示する周波数の下限 (Hz)。0=DC成分から表示
+freq_max = 10000             # 表示する周波数の上限 (Hz)。Noneまたは0で最大周波数まで表示
 
 # Plotting appearance
 plot_max_freq_bins = 200     # Maximum frequency bins to display (reduces resolution if exceeded)
-plot_db_min = -80            # Minimum dB level for colormap normalization
-plot_db_max = -10            # Maximum dB level for colormap normalization
+plot_db_min = -110           # Minimum dB level for colormap normalization (実測値-100より低く設定)
+plot_db_max = -60            # Maximum dB level for colormap normalization (実測値-89より高く設定)
 plot_max_cuts = 15           # Maximum number of cut annotations to display on spectrogram
 plot_dpi = 150               # DPI for saving spectrogram images
 
 [audio_processing]
 # Parameters for cut_wav_and_make_metadata
-cut_margin_minutes = 5       # Margin in minutes before and after min_distance_time to define cut range 
-max_cut_distance = 10000.0    # 最大カット距離（メートル）- この距離以内の船舶だけがカット対象
-check_other_vessels = true   # 対象船舶が最も接近した時刻で他の船舶すべてが対象船舶よりも録音位置から離れているかチェックする 
+cut_margin_minutes = 1       # Margin in minutes before and after min_distance_time to define cut range 
+max_cut_distance = 1000.0    # 最大カット距離（メートル）- この距離以内の船舶だけがカット対象
+check_other_vessels = false   # 対象船舶が最も接近した時刻で他の船舶すべてが対象船舶よりも録音位置から離れているかチェックする 
+
+[data_processing]
+# AIS data processing mode
+combine_all_ais = true       # 全AIS CSVを結合して処理（true推奨）。falseの場合、CSVごとに独立処理し同一船舶でも重複切り出しの可能性あり
+low_memory_mode = true      # メモリ不足の場合trueに設定。処理は遅くなるが、メモリ使用量を削減（MMSI単位で処理）
+
+[acoustic_features]
+# Parameters for acoustic feature analysis
+analysis_time_window = 10    # 最短距離時刻から前後何秒の音を分析するか（秒）
+enable_feature_plots = true  # 音響特徴量と船舶パラメータの2次元グラフを生成するか
