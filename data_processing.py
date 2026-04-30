@@ -218,6 +218,16 @@ def complement_trajectory(
         data = data.copy()
     else:
         data = read_ais(data)
+
+    data["dt_pos_utc"] = pd.to_datetime(data["dt_pos_utc"], errors="coerce")
+    invalid_time_count = data["dt_pos_utc"].isna().sum()
+    if invalid_time_count:
+        print(f"Warning: Dropping {invalid_time_count} AIS rows with invalid dt_pos_utc.")
+        data = data.dropna(subset=["dt_pos_utc"]).copy()
+    if data.empty:
+        data["depth"] = pd.Series(dtype="int64")
+        return data
+
     # 補完前の軌跡を表示（オプション）
     if plot_before_after and record_pos is not None and output_dir is not None:
         os.makedirs(output_dir, exist_ok=True)

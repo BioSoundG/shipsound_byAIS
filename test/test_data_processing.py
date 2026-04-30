@@ -292,6 +292,46 @@ class TestDataProcessing(unittest.TestCase):
         self.assertAlmostEqual(v.iloc[1]["latitude"], 1.1, places=6)
         self.assertAlmostEqual(v.iloc[1]["longitude"], 2.1, places=6)
 
+    def test_complement_trajectory_drops_nat_timestamps(self):
+        """Rows with missing timestamps are ignored before resampling."""
+        t0 = pd.Timestamp("2024-01-01 00:00:00")
+        t2 = pd.Timestamp("2024-01-01 00:00:02")
+        df = pd.DataFrame(
+            {
+                "mmsi": [111, 111, 111, 222, 222],
+                "length": [100, 100, 100, 80, 80],
+                "width": [20, 20, 20, 15, 15],
+                "latitude": [1.0, 9.9, 1.2, 2.0, 2.1],
+                "longitude": [2.0, 9.9, 2.2, 3.0, 3.1],
+                "dt_pos_utc": [t0, pd.NaT, t2, pd.NaT, pd.NaT],
+            }
+        )
+
+        result = complement_trajectory(df)
+
+        self.assertFalse(result["dt_pos_utc"].isna().any())
+        self.assertEqual(set(result["mmsi"].unique()), {111})
+        v = result[result["mmsi"] == 111].sort_values("dt_pos_utc")
+        self.assertEqual(len(v), 3)
+        self.assertAlmostEqual(v.iloc[1]["latitude"], 1.1, places=6)
+        self.assertAlmostEqual(v.iloc[1]["longitude"], 2.1, places=6)
+
+    def test_complement_trajectory_returns_empty_when_all_timestamps_nat(self):
+        """All-invalid timestamp input does not reach pandas resample."""
+        df = pd.DataFrame(
+            {
+                "mmsi": [333, 333],
+                "latitude": [1.0, 1.1],
+                "longitude": [2.0, 2.1],
+                "dt_pos_utc": [pd.NaT, pd.NaT],
+            }
+        )
+
+        result = complement_trajectory(df)
+
+        self.assertTrue(result.empty)
+        self.assertIn("depth", result.columns)
+
     def test_read_ais_speed_column_normalization(self):
         """speedカラムが様々なヘッダー名から正しく読み込まれることを確認"""
         # テスト1: "speed"ヘッダー
