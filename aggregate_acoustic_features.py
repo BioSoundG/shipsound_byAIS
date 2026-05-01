@@ -65,14 +65,50 @@ def read_and_combine_acoustic_features(csv_paths: list[Path]) -> pd.DataFrame:
     return combined
 
 
-def save_summary(combined_df: pd.DataFrame, csv_paths: list[Path], output_dir: Path) -> None:
+def filter_by_speed_range(
+    df: pd.DataFrame,
+    speed_min: float | None = None,
+    speed_max: float | None = None,
+) -> pd.DataFrame:
+    """Filter rows by vessel_speed_knots when a speed range is specified."""
+    if speed_min is None and speed_max is None:
+        return df
+    if "vessel_speed_knots" not in df.columns:
+        raise KeyError("vessel_speed_knots column is required for speed filtering.")
+    if speed_min is not None and speed_max is not None and speed_min > speed_max:
+        raise ValueError("--speed-min must be less than or equal to --speed-max.")
+
+    filtered = df.copy()
+    speed = pd.to_numeric(filtered["vessel_speed_knots"], errors="coerce")
+    mask = speed.notna()
+    if speed_min is not None:
+        mask &= speed >= speed_min
+    if speed_max is not None:
+        mask &= speed <= speed_max
+
+    return filtered.loc[mask].copy()
+
+
+def save_summary(
+    combined_df: pd.DataFrame,
+    csv_paths: list[Path],
+    output_dir: Path,
+    loaded_rows: int,
+    speed_min: float | None = None,
+    speed_max: float | None = None,
+) -> None:
     """Save a small text summary of the aggregation."""
     summary_path = output_dir / "combined_acoustic_features_summary.txt"
     with summary_path.open("w", encoding="utf-8") as f:
         f.write("Combined acoustic feature analysis\n")
         f.write("=" * 40 + "\n")
         f.write(f"Input CSV files: {len(csv_paths)}\n")
-        f.write(f"Combined rows: {len(combined_df)}\n")
+        f.write(f"Loaded rows: {loaded_rows}\n")
+        f.write(f"Analyzed rows: {len(combined_df)}\n")
+        if speed_min is not None or speed_max is not None:
+            min_label = "-inf" if speed_min is None else speed_min
+            max_label = "inf" if speed_max is None else speed_max
+            f.write(f"Speed filter: {min_label} to {max_label} knots\n")
         if "mmsi" in combined_df.columns:
             f.write(f"Unique MMSI: {combined_df['mmsi'].nunique(dropna=True)}\n")
         f.write("\nInput files:\n")
@@ -84,6 +120,8 @@ def aggregate_and_plot(
     inputs: list[str],
     output_dir: str,
     pattern: str = DEFAULT_PATTERN,
+    speed_min: float | None = None,
+    speed_max: float | None = None,
 ) -> pd.DataFrame:
     """Aggregate acoustic feature CSVs, save the combined CSV, and create plots."""
     csv_paths = find_acoustic_feature_csvs(inputs, pattern)
@@ -100,11 +138,16 @@ def aggregate_and_plot(
     if combined_df.empty:
         raise ValueError("No valid acoustic feature rows were loaded.")
 
+    loaded_rows = len(combined_df)
+    combined_df = filter_by_speed_range(combined_df, speed_min, speed_max)
+    if combined_df.empty:
+        raise ValueError("No acoustic feature rows remain after speed filtering.")
+
     combined_csv_path = output_path / "combined_acoustic_features.csv"
     combined_df.to_csv(combined_csv_path, index=False)
     print(f"Combined CSV saved: {combined_csv_path}")
 
-    save_summary(combined_df, csv_paths, output_path)
+    save_summary(combined_df, csv_paths, output_path, loaded_rows, speed_min, speed_max)
     plot_feature_vs_vessel_params(combined_df, str(output_path))
     return combined_df
 
@@ -137,12 +180,30 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_PATTERN,
         help="Filename pattern to search for when an input is a directory.",
     )
+    parser.add_argument(
+        "--speed-min",
+        type=float,
+        default=None,
+        help="Minimum vessel_speed_knots value to include in the analysis.",
+    )
+    parser.add_argument(
+        "--speed-max",
+        type=float,
+        default=None,
+        help="Maximum vessel_speed_knots value to include in the analysis.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    aggregate_and_plot(args.input, args.output_dir, args.pattern)
+    aggregate_and_plot(
+        args.input,
+        args.output_dir,
+        args.pattern,
+        speed_min=args.speed_min,
+        speed_max=args.speed_max,
+    )
 
 
 if __name__ == "__main__":

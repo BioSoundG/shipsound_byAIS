@@ -96,6 +96,13 @@ combined dataset:
 python aggregate_acoustic_features.py -i OUTPUT_DIR_OR_CSV [MORE_DIRS_OR_CSVS ...] -o combined_acoustic_features_analysis
 ```
 
+To limit the analysis to a vessel speed range, add `--speed-min` and/or
+`--speed-max`:
+
+```bash
+python aggregate_acoustic_features.py -i OUTPUT_DIR_OR_CSV -o combined_acoustic_features_analysis --speed-min 1 --speed-max 40
+```
+
 When an input is a directory, the script searches it recursively for files named
 `acoustic_features.csv`. It saves `combined_acoustic_features.csv`, a summary
 text file, and the generated figures in the output directory.
