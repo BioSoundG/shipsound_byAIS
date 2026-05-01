@@ -89,6 +89,17 @@ To execute the pipeline, run the `main.py` script, providing the necessary comma
 python main.py -a AIS_PATH -w WAV_PATH -m TOML_PATH -t RECORD_START_TIME [-c CONFIG_PATH] [-ff] [-mf] [-cf]
 ```
 
+To combine multiple `acoustic_features.csv` files and generate plots from the
+combined dataset:
+
+```bash
+python aggregate_acoustic_features.py -i OUTPUT_DIR_OR_CSV [MORE_DIRS_OR_CSVS ...] -o combined_acoustic_features_analysis
+```
+
+When an input is a directory, the script searches it recursively for files named
+`acoustic_features.csv`. It saves `combined_acoustic_features.csv`, a summary
+text file, and the generated figures in the output directory.
+
 ### Command-line Arguments
 
 The script accepts the following arguments:
