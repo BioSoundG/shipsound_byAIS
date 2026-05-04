@@ -111,16 +111,17 @@ To estimate vessel tonnage from AIS static fields and plot a log-scale tonnage
 frequency distribution:
 
 ```bash
-python plot_vessel_tonnage_distribution.py -i AIS_CSV_OR_DIR [MORE_AIS_DIRS_OR_CSVS ...] -o vessel_tonnage_distribution
+python plot_vessel_tonnage_distribution.py -a AIS_CSV_DIR [MORE_AIS_DIRS_OR_CSVS ...] -t CUT_TOML_DIR [MORE_CUT_TOML_DIRS_OR_FILES ...] -o vessel_tonnage_distribution
 ```
 
-When an input is a directory, the script reads all CSV files inside it
-recursively. Tonnage is estimated from AIS `length`, `width`, and `draught`
-fields when available. If draught is unavailable, it falls back to
-`length * width * coefficient`. The plot uses 300 tons as the default lower
-x-axis limit. Vessels below 300 tons are excluded from the plotted histogram and
-reported separately in `vessel_tonnage_distribution_summary.txt`. The script
-also saves `vessel_tonnage_estimates.csv`.
+The script reads target MMSIs from the cut metadata TOML files, then looks up
+those vessels in all AIS CSV files found under the AIS input directories.
+Tonnage is estimated from AIS `length`, `width`, and `draught` fields when
+available. If draught is unavailable, it falls back to `length * width *
+coefficient`. The plot uses 300 tons as the default lower x-axis limit. Vessels
+below 300 tons are excluded from the plotted histogram and reported separately
+in `vessel_tonnage_distribution_summary.txt`. The script also saves
+`vessel_tonnage_estimates.csv`.
 
 ### Command-line Arguments
 

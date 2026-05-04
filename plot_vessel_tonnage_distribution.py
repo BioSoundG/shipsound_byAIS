@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import matplotlib
@@ -15,17 +16,18 @@ import pandas as pd
 
 
 DIMENSION_COEFFICIENT = 0.7
+MMSI_PATTERN = re.compile(r"\bmmsi\s*:\s*(\d+)", re.IGNORECASE)
 
 
-def find_ais_csvs(inputs: list[str]) -> list[Path]:
-    """Find AIS CSV files from multiple file or directory inputs."""
+def find_files(inputs: list[str], suffix: str) -> list[Path]:
+    """Find files with suffix from multiple file or directory inputs."""
     paths: list[Path] = []
     for item in inputs:
         path = Path(item)
-        if path.is_file() and path.suffix.lower() == ".csv":
+        if path.is_file() and path.suffix.lower() == suffix:
             paths.append(path)
         elif path.is_dir():
-            paths.extend(path.rglob("*.csv"))
+            paths.extend(path.rglob(f"*{suffix}"))
         else:
             print(f"Warning: input path skipped: {path}")
     return sorted({p.resolve() for p in paths})
@@ -39,6 +41,29 @@ def find_column_case_insensitive(df: pd.DataFrame, candidates: list[str]) -> str
         if found is not None:
             return found
     return None
+
+
+def read_toml_text(toml_path: Path) -> str:
+    """Read a TOML file as text, tolerating common encodings."""
+    for encoding in ("utf-8", "utf-8-sig", "cp932"):
+        try:
+            return toml_path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return toml_path.read_text(errors="ignore")
+
+
+def collect_mmsis_from_toml(toml_paths: list[Path]) -> set[int]:
+    """Collect target MMSIs from cut metadata TOML files."""
+    mmsis: set[int] = set()
+    for toml_path in toml_paths:
+        text = read_toml_text(toml_path)
+        matches = MMSI_PATTERN.findall(text)
+        if matches:
+            mmsis.update(int(match) for match in matches)
+        else:
+            print(f"Warning: MMSI not found in TOML: {toml_path}")
+    return mmsis
 
 
 def first_existing_numeric(df: pd.DataFrame, candidates: list[str]) -> pd.Series | None:
@@ -101,8 +126,8 @@ def normalize_ais_static_fields(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
-def read_static_vessel_rows(csv_paths: list[Path]) -> pd.DataFrame:
-    """Read static vessel fields from AIS CSVs and combine one row per source row."""
+def read_static_vessel_rows(csv_paths: list[Path], target_mmsis: set[int]) -> pd.DataFrame:
+    """Read static vessel fields from AIS CSVs for target MMSIs."""
     frames = []
     for csv_path in csv_paths:
         try:
@@ -116,13 +141,16 @@ def read_static_vessel_rows(csv_paths: list[Path]) -> pd.DataFrame:
             print(f"Warning: MMSI column not found: {csv_path}")
             continue
         normalized["source_file"] = str(csv_path)
-        frames.append(normalized)
+
+        normalized = normalized.dropna(subset=["mmsi"]).copy()
+        normalized["mmsi"] = normalized["mmsi"].astype("int64")
+        normalized = normalized[normalized["mmsi"].isin(target_mmsis)]
+        if not normalized.empty:
+            frames.append(normalized)
 
     if not frames:
         return pd.DataFrame()
     combined = pd.concat(frames, ignore_index=True, sort=False)
-    combined = combined.dropna(subset=["mmsi"]).copy()
-    combined["mmsi"] = combined["mmsi"].astype("int64")
     return combined
 
 
@@ -165,6 +193,29 @@ def build_tonnage_dataframe(static_rows: pd.DataFrame, coefficient: float) -> pd
             }
         )
     return pd.DataFrame(rows)
+
+
+def append_missing_target_mmsis(tonnage_df: pd.DataFrame, target_mmsis: set[int]) -> pd.DataFrame:
+    """Add missing target MMSIs with empty tonnage rows."""
+    existing = set(tonnage_df["mmsi"].dropna().astype("int64")) if not tonnage_df.empty else set()
+    missing = sorted(target_mmsis - existing)
+    if not missing:
+        return tonnage_df
+
+    missing_df = pd.DataFrame(
+        {
+            "mmsi": missing,
+            "vessel_name": np.nan,
+            "vessel_type": np.nan,
+            "estimated_tonnage": np.nan,
+            "tonnage_source": "missing_ais_static_info",
+            "length_m": np.nan,
+            "width_m": np.nan,
+            "draught_m": np.nan,
+            "source_file": np.nan,
+        }
+    )
+    return pd.concat([tonnage_df, missing_df], ignore_index=True, sort=False)
 
 
 def plot_tonnage_distribution(
@@ -241,25 +292,37 @@ def save_summary(tonnage_df: pd.DataFrame, output_dir: Path, min_tonnage: float,
 
 
 def run_analysis(
-    inputs: list[str],
+    ais_inputs: list[str],
+    toml_inputs: list[str],
     output_dir: str,
     min_tonnage: float = 300.0,
     bins: int = 25,
     coefficient: float = DIMENSION_COEFFICIENT,
 ) -> pd.DataFrame:
-    """Read AIS CSVs, estimate vessel tonnage, and save outputs."""
-    csv_paths = find_ais_csvs(inputs)
+    """Read cut TOMLs and AIS CSVs, estimate target vessel tonnage, and save outputs."""
+    csv_paths = find_files(ais_inputs, ".csv")
     if not csv_paths:
         raise FileNotFoundError("No AIS CSV files found.")
 
-    static_rows = read_static_vessel_rows(csv_paths)
-    if static_rows.empty:
-        raise ValueError("No usable AIS static fields were found.")
+    toml_paths = find_files(toml_inputs, ".toml")
+    if not toml_paths:
+        raise FileNotFoundError("No cut metadata TOML files found.")
+
+    target_mmsis = collect_mmsis_from_toml(toml_paths)
+    if not target_mmsis:
+        raise ValueError("No target MMSI values were found in cut metadata TOML files.")
+
+    static_rows = read_static_vessel_rows(csv_paths, target_mmsis)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    tonnage_df = build_tonnage_dataframe(static_rows, coefficient)
+    if static_rows.empty:
+        tonnage_df = pd.DataFrame()
+    else:
+        tonnage_df = build_tonnage_dataframe(static_rows, coefficient)
+    tonnage_df = append_missing_target_mmsis(tonnage_df, target_mmsis)
+
     table_path = output_path / "vessel_tonnage_estimates.csv"
     tonnage_df.to_csv(table_path, index=False)
 
@@ -267,6 +330,8 @@ def run_analysis(
     save_summary(tonnage_df, output_path, min_tonnage, len(csv_paths))
 
     print(f"Read AIS CSV files: {len(csv_paths)}")
+    print(f"Read cut TOML files: {len(toml_paths)}")
+    print(f"Target MMSI count: {len(target_mmsis)}")
     print(f"Tonnage table saved: {table_path}")
     print(f"Distribution plot saved: {plot_path}")
     return tonnage_df
@@ -280,13 +345,23 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "-i",
-        "--input",
+        "-a",
+        "--ais-input",
         nargs="+",
         required=True,
         help=(
             "AIS CSV files or directories. You can specify multiple directories; "
             "all CSV files inside each directory are read recursively."
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--toml-input",
+        nargs="+",
+        required=True,
+        help=(
+            "Directories or files containing cut metadata TOML files. You can specify "
+            "multiple directories; all TOML files inside each directory are read recursively."
         ),
     )
     parser.add_argument(
@@ -318,7 +393,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     run_analysis(
-        args.input,
+        args.ais_input,
+        args.toml_input,
         args.output_dir,
         min_tonnage=args.min_tonnage,
         bins=args.bins,
