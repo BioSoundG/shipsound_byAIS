@@ -115,13 +115,15 @@ python plot_vessel_tonnage_distribution.py -a AIS_CSV_DIR [MORE_AIS_DIRS_OR_CSVS
 ```
 
 The script reads target MMSIs from the cut metadata TOML files, then looks up
-those vessels in all AIS CSV files found under the AIS input directories.
-Tonnage is estimated from AIS `length`, `width`, and `draught` fields when
-available. If draught is unavailable, it falls back to `length * width *
-coefficient`. The plot uses 300 tons as the default lower x-axis limit. Vessels
-below 300 tons are excluded from the plotted histogram and reported separately
-in `vessel_tonnage_distribution_summary.txt`. The script also saves
-`vessel_tonnage_estimates.csv`.
+those vessels in all AIS CSV files found under the AIS input directories. It
+creates one row per TOML file, so repeated MMSI values are kept as separate
+records. For each TOML, the AIS row with the same MMSI nearest to the TOML
+`min_distance_time` is used. Tonnage is estimated from AIS `length`, `width`,
+and `draught` fields when available. If draught is unavailable, it falls back to
+`length * width * coefficient`. The plot uses 300 tons as the default lower
+x-axis limit. Vessels below 300 tons are excluded from the plotted histogram and
+reported separately in `vessel_tonnage_distribution_summary.txt`. The script
+also saves `vessel_tonnage_estimates.csv`.
 
 ### Command-line Arguments
 

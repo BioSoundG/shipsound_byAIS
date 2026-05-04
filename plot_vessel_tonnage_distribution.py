@@ -17,6 +17,9 @@ import pandas as pd
 
 DIMENSION_COEFFICIENT = 0.7
 MMSI_PATTERN = re.compile(r"\bmmsi\s*:\s*(\d+)", re.IGNORECASE)
+MIN_DISTANCE_TIME_PATTERN = re.compile(
+    r"\bmin_distance_time\s*:\s*([0-9T:\- ]+)", re.IGNORECASE
+)
 
 
 def find_files(inputs: list[str], suffix: str) -> list[Path]:
@@ -53,17 +56,44 @@ def read_toml_text(toml_path: Path) -> str:
     return toml_path.read_text(errors="ignore")
 
 
-def collect_mmsis_from_toml(toml_paths: list[Path]) -> set[int]:
-    """Collect target MMSIs from cut metadata TOML files."""
-    mmsis: set[int] = set()
+def parse_toml_record(toml_path: Path) -> dict[str, object] | None:
+    """Extract MMSI and target time from one cut metadata TOML file."""
+    text = read_toml_text(toml_path)
+    mmsi_match = MMSI_PATTERN.search(text)
+    if not mmsi_match:
+        print(f"Warning: MMSI not found in TOML: {toml_path}")
+        return None
+
+    time_match = MIN_DISTANCE_TIME_PATTERN.search(text)
+    target_time = None
+    if time_match:
+        target_time = pd.to_datetime(time_match.group(1).strip(), errors="coerce")
+    if target_time is None or pd.isna(target_time):
+        start_match = re.search(
+            r"\bstart_date\s*=\s*[\"']([^\"']+)[\"']", text, flags=re.IGNORECASE
+        )
+        if start_match:
+            target_time = pd.to_datetime(start_match.group(1).strip(), errors="coerce")
+
+    return {
+        "cut_index": None,
+        "toml_file": str(toml_path),
+        "mmsi": int(mmsi_match.group(1)),
+        "target_time": target_time if target_time is not None and pd.notna(target_time) else pd.NaT,
+    }
+
+
+def collect_cut_records_from_toml(toml_paths: list[Path]) -> pd.DataFrame:
+    """Collect one target record per cut metadata TOML file."""
+    records = []
     for toml_path in toml_paths:
-        text = read_toml_text(toml_path)
-        matches = MMSI_PATTERN.findall(text)
-        if matches:
-            mmsis.update(int(match) for match in matches)
-        else:
-            print(f"Warning: MMSI not found in TOML: {toml_path}")
-    return mmsis
+        record = parse_toml_record(toml_path)
+        if record is not None:
+            records.append(record)
+    cut_records = pd.DataFrame(records)
+    if not cut_records.empty:
+        cut_records["cut_index"] = range(1, len(cut_records) + 1)
+    return cut_records
 
 
 def first_existing_numeric(df: pd.DataFrame, candidates: list[str]) -> pd.Series | None:
@@ -123,6 +153,15 @@ def normalize_ais_static_fields(df: pd.DataFrame) -> pd.DataFrame:
     normalized["length_m"] = length if length is not None else np.nan
     normalized["width_m"] = width if width is not None else np.nan
     normalized["draught_m"] = draught if draught is not None else np.nan
+
+    dt_col = find_column_case_insensitive(
+        df,
+        ["dt_pos_utc", "MESSAGE TIMESTAMP", "timeUpdated(utc)", "timestamp", "datetime"],
+    )
+    if dt_col is not None:
+        normalized["dt_pos_utc"] = pd.to_datetime(df[dt_col], errors="coerce")
+    else:
+        normalized["dt_pos_utc"] = pd.NaT
     return normalized
 
 
@@ -154,6 +193,25 @@ def read_static_vessel_rows(csv_paths: list[Path], target_mmsis: set[int]) -> pd
     return combined
 
 
+def select_nearest_ais_row(cut_record: pd.Series, static_rows: pd.DataFrame) -> pd.Series | None:
+    """Select the AIS row for this MMSI nearest to the TOML target time."""
+    vessel_rows = static_rows[static_rows["mmsi"] == cut_record["mmsi"]].copy()
+    if vessel_rows.empty:
+        return None
+
+    target_time = cut_record.get("target_time")
+    if pd.notna(target_time) and "dt_pos_utc" in vessel_rows.columns:
+        timed_rows = vessel_rows.dropna(subset=["dt_pos_utc"]).copy()
+        if not timed_rows.empty:
+            timed_rows["time_diff_seconds"] = (
+                timed_rows["dt_pos_utc"] - target_time
+            ).abs().dt.total_seconds()
+            return timed_rows.sort_values("time_diff_seconds").iloc[0]
+
+    vessel_rows["dimension_score"] = vessel_rows[["length_m", "width_m", "draught_m"]].notna().sum(axis=1)
+    return vessel_rows.sort_values("dimension_score", ascending=False).iloc[0]
+
+
 def estimate_tonnage_from_ais(row: pd.Series, coefficient: float) -> tuple[float | None, str]:
     """Estimate tonnage from AIS length, width, and draught."""
     length = row.get("length_m")
@@ -171,17 +229,29 @@ def estimate_tonnage_from_ais(row: pd.Series, coefficient: float) -> tuple[float
     return None, "missing_dimensions"
 
 
-def build_tonnage_dataframe(static_rows: pd.DataFrame, coefficient: float) -> pd.DataFrame:
-    """Collapse AIS rows to one estimated tonnage row per MMSI."""
+def build_tonnage_dataframe(
+    cut_records: pd.DataFrame,
+    static_rows: pd.DataFrame,
+    coefficient: float,
+) -> pd.DataFrame:
+    """Build one estimated tonnage row per cut TOML file."""
     rows = []
-    for mmsi, group in static_rows.groupby("mmsi", sort=True):
-        best = group.copy()
-        best["dimension_score"] = best[["length_m", "width_m", "draught_m"]].notna().sum(axis=1)
-        best = best.sort_values("dimension_score", ascending=False).iloc[0]
-        tonnage, source = estimate_tonnage_from_ais(best, coefficient)
+    for _, cut_record in cut_records.iterrows():
+        best = select_nearest_ais_row(cut_record, static_rows)
+        if best is None:
+            tonnage = None
+            source = "missing_ais_static_info"
+            best = pd.Series(dtype="object")
+        else:
+            tonnage, source = estimate_tonnage_from_ais(best, coefficient)
         rows.append(
             {
-                "mmsi": int(mmsi),
+                "cut_index": cut_record.get("cut_index"),
+                "toml_file": cut_record.get("toml_file"),
+                "mmsi": int(cut_record["mmsi"]),
+                "target_time": cut_record.get("target_time"),
+                "ais_time": best.get("dt_pos_utc"),
+                "ais_time_diff_seconds": best.get("time_diff_seconds"),
                 "vessel_name": best.get("vessel_name"),
                 "vessel_type": best.get("vessel_type"),
                 "estimated_tonnage": tonnage,
@@ -193,29 +263,6 @@ def build_tonnage_dataframe(static_rows: pd.DataFrame, coefficient: float) -> pd
             }
         )
     return pd.DataFrame(rows)
-
-
-def append_missing_target_mmsis(tonnage_df: pd.DataFrame, target_mmsis: set[int]) -> pd.DataFrame:
-    """Add missing target MMSIs with empty tonnage rows."""
-    existing = set(tonnage_df["mmsi"].dropna().astype("int64")) if not tonnage_df.empty else set()
-    missing = sorted(target_mmsis - existing)
-    if not missing:
-        return tonnage_df
-
-    missing_df = pd.DataFrame(
-        {
-            "mmsi": missing,
-            "vessel_name": np.nan,
-            "vessel_type": np.nan,
-            "estimated_tonnage": np.nan,
-            "tonnage_source": "missing_ais_static_info",
-            "length_m": np.nan,
-            "width_m": np.nan,
-            "draught_m": np.nan,
-            "source_file": np.nan,
-        }
-    )
-    return pd.concat([tonnage_df, missing_df], ignore_index=True, sort=False)
 
 
 def plot_tonnage_distribution(
@@ -308,20 +355,17 @@ def run_analysis(
     if not toml_paths:
         raise FileNotFoundError("No cut metadata TOML files found.")
 
-    target_mmsis = collect_mmsis_from_toml(toml_paths)
-    if not target_mmsis:
+    cut_records = collect_cut_records_from_toml(toml_paths)
+    if cut_records.empty:
         raise ValueError("No target MMSI values were found in cut metadata TOML files.")
 
+    target_mmsis = set(cut_records["mmsi"].astype("int64"))
     static_rows = read_static_vessel_rows(csv_paths, target_mmsis)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    if static_rows.empty:
-        tonnage_df = pd.DataFrame()
-    else:
-        tonnage_df = build_tonnage_dataframe(static_rows, coefficient)
-    tonnage_df = append_missing_target_mmsis(tonnage_df, target_mmsis)
+    tonnage_df = build_tonnage_dataframe(cut_records, static_rows, coefficient)
 
     table_path = output_path / "vessel_tonnage_estimates.csv"
     tonnage_df.to_csv(table_path, index=False)
@@ -331,7 +375,8 @@ def run_analysis(
 
     print(f"Read AIS CSV files: {len(csv_paths)}")
     print(f"Read cut TOML files: {len(toml_paths)}")
-    print(f"Target MMSI count: {len(target_mmsis)}")
+    print(f"Target TOML records: {len(cut_records)}")
+    print(f"Unique target MMSI count: {len(target_mmsis)}")
     print(f"Tonnage table saved: {table_path}")
     print(f"Distribution plot saved: {plot_path}")
     return tonnage_df
