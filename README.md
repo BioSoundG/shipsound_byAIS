@@ -107,19 +107,20 @@ When an input is a directory, the script searches it recursively for files named
 `acoustic_features.csv`. It saves `combined_acoustic_features.csv`, a summary
 text file, and the generated figures in the output directory.
 
-To fetch vessel tonnage from VesselFinder by MMSI and plot a log-scale tonnage
+To estimate vessel tonnage from AIS static fields and plot a log-scale tonnage
 frequency distribution:
 
 ```bash
-set VESSELFINDER_API_KEY=YOUR_API_KEY
-python plot_vessel_tonnage_distribution.py -i AIS_CSV_OR_DIR -o vessel_tonnage_distribution
+python plot_vessel_tonnage_distribution.py -i AIS_CSV_OR_DIR [MORE_AIS_DIRS_OR_CSVS ...] -o vessel_tonnage_distribution
 ```
 
-The plot uses 300 tons as the default lower x-axis limit. Vessels below 300 tons
-are excluded from the plotted histogram and reported separately in
-`vessel_tonnage_distribution_summary.txt`. The script also saves
-`vessel_tonnage_estimates.csv` and caches VesselFinder responses to reduce
-repeated API calls.
+When an input is a directory, the script reads all CSV files inside it
+recursively. Tonnage is estimated from AIS `length`, `width`, and `draught`
+fields when available. If draught is unavailable, it falls back to
+`length * width * coefficient`. The plot uses 300 tons as the default lower
+x-axis limit. Vessels below 300 tons are excluded from the plotted histogram and
+reported separately in `vessel_tonnage_distribution_summary.txt`. The script
+also saves `vessel_tonnage_estimates.csv`.
 
 ### Command-line Arguments
 
